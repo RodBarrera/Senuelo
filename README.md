@@ -28,8 +28,8 @@ al castigo). Señuelo está construido para corregir exactamente eso.
 | Módulo | Estado |
 |---|---|
 | `scope` — motor de alcance y autorización | ✅ implementado |
+| `scoring` — NIST Phish Scale (dificultad + contexto de click rate) | ✅ implementado |
 | `campaigns`, `delivery`, `tracking` | 🔜 |
-| `scoring` (Phish Scale + human risk) | 🔜 |
 | `training` (no-embedded), `dashboard` | 🔜 |
 | API FastAPI + `audit` log inmutable | 🔜 |
 
@@ -92,12 +92,63 @@ Rechazados (4):
 - **Toda decisión es auditable.** Cada rechazo lleva un código estable y un
   motivo legible, pensados para alimentar el audit log inmutable.
 
+## El scoring de dificultad (`senuelo.scoring`)
+
+Implementación fiel del **NIST Phish Scale** (Steves, Greene & Theofanos, 2020).
+Puntúa la dificultad de detección de una plantilla combinando dos dimensiones:
+
+- **Señales (cues):** catálogo de 23 características observables en 5 categorías
+  (errores, indicadores técnicos, presentación visual, lenguaje/contenido,
+  tácticas comunes). Más señales ⇒ más fácil de detectar. El conteo se clasifica
+  en `Few` (1–8), `Some` (9–14) o `Many` (15+).
+- **Alineación de premisa:** qué tan bien calza el pretexto con el contexto de
+  la audiencia. Por Método 1 (directo `Low`/`Medium`/`High`) o Método 2
+  (formulaico: 5 elementos en escala 0–8, sumando 1–4 y restando el de
+  entrenamiento previo; `Low` ≤10, `Medium` 11–17, `High` ≥18).
+
+La Tabla 1 del paper combina ambas en una dificultad de detección, y cada
+dificultad trae su **rango esperado de click rate**. Eso permite *contextualizar*
+las métricas:
+
+```python
+from senuelo.scoring import (
+    PhishScaleAssessment, PremiseAlignment, contextualize_click_rate,
+)
+
+a = PhishScaleAssessment.from_cue_list(
+    ["mimics_business_process", "url_hyperlinking"],   # 2 señales -> Few
+    target_audience="Finanzas (paga facturas)",
+    premise_alignment=PremiseAlignment.HIGH,
+)
+r = a.result()
+print(r.detection_difficulty.label_es)            # "Muy difícil"
+print(contextualize_click_rate(r, 22.0).message)  # 22% está dentro de lo esperado...
+```
+
+Salida de `examples/scoring_quickstart.py`:
+
+```
+== Factura impaga a Finanzas (dirigido) ==
+  Señales: 2 (few) | premisa: high (Método 1)
+  Dificultad: Muy difícil (esperado 19–100% de click)
+  Observado: 22.0% está dentro de lo esperado (19–100%) para un phish 'Muy difícil'.
+
+== Lotería sospechosa (genérico) ==
+  Señales: 15 (many) | premisa: 4 (low)
+  Dificultad: Poco difícil (esperado 0–10% de click)
+  Observado: 24.0% supera el rango esperado (0–10%): vale la pena investigar.
+```
+
+Ese es el argumento del Phish Scale en acción: el mismo click rate significa
+cosas opuestas según la dificultad. Sin normalizar por dificultad, comparar
+campañas es engañarse.
+
 ## Desarrollo
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest -q          # 26 tests
+pytest -q          # 52 tests
 PYTHONPATH=. python examples/quickstart.py
 ```
 
