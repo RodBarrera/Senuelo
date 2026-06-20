@@ -1,0 +1,17 @@
+[project]
+name = "senuelo"
+version = "0.1.0"
+description = "Plataforma de simulación de phishing para concientización, basada en evidencia y consentimiento."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2,<3",
+    "email-validator>=2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
