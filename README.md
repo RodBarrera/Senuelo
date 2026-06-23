@@ -29,9 +29,10 @@ al castigo). Señuelo está construido para corregir exactamente eso.
 |---|---|
 | `scope` — motor de alcance y autorización | ✅ implementado |
 | `scoring` — NIST Phish Scale (dificultad + contexto de click rate) | ✅ implementado |
+| `api` — capa FastAPI (autorizaciones + scoring, API key) | ✅ implementado |
+| `storage` — persistencia SQLite + audit log inmutable (cadena de hashes) | ✅ implementado |
 | `campaigns`, `delivery`, `tracking` | 🔜 |
 | `training` (no-embedded), `dashboard` | 🔜 |
-| API FastAPI + `audit` log inmutable | 🔜 |
 
 ## El motor de alcance (`senuelo.scope`)
 
@@ -143,13 +144,89 @@ Ese es el argumento del Phish Scale en acción: el mismo click rate significa
 cosas opuestas según la dificultad. Sin normalizar por dificultad, comparar
 campañas es engañarse.
 
+## La capa web (`senuelo.api`)
+
+API FastAPI que envuelve los motores de `scope` y `scoring`. Decisiones de
+seguridad: la clave de firmado y la API key se leen del **entorno del servidor**
+(`SENUELO_SIGNING_KEY`, `SENUELO_API_KEY`), nunca del cliente ni del código; si
+hay API key configurada, se exige el header `X-API-Key` (comparación en tiempo
+constante); el repositorio de autorizaciones está tras una interfaz para migrar
+a base de datos sin tocar los endpoints.
+
+Levantar en desarrollo:
+
+```bash
+export SENUELO_SIGNING_KEY="una-clave-larga-y-secreta"
+uvicorn senuelo.api.app:app --reload
+# documentación interactiva en http://127.0.0.1:8000/docs
+```
+
+Endpoints principales:
+
+| Método | Ruta | Qué hace |
+|---|---|---|
+| `GET` | `/health` | Estado y flags de configuración |
+| `POST` | `/authorizations` | Crea y **firma** una autorización |
+| `GET` | `/authorizations/{id}` | Consulta una autorización |
+| `POST` | `/authorizations/{id}/revoke` | Revoca (re-firma el cambio) |
+| `POST` | `/authorizations/{id}/recipient-check` | Valida destinatarios contra el alcance |
+| `GET` | `/scoring/cues` | Catálogo de las 23 señales |
+| `POST` | `/scoring/assess` | Dificultad de una plantilla |
+| `POST` | `/scoring/contextualize` | Interpreta un click rate observado |
+
+Ejemplo: validar destinatarios contra una autorización devuelve quién entra y
+por qué se rechaza cada quien:
+
+```json
+{
+  "admitted": ["ok@empresa.cl"],
+  "rejected": [
+    {"email": "fuera@gmail.com", "code": "out_of_scope", "reason": "dominio fuera del alcance autorizado: gmail.com"},
+    {"email": "jefe@empresa.cl", "code": "excluded_recipient", "reason": "destinatario en lista de exclusión: jefe@empresa.cl"}
+  ],
+  "admitted_count": 1, "rejected_count": 2, "total": 3
+}
+```
+
+## Persistencia y audit log inmutable (`senuelo.storage`)
+
+Sin configuración, la API guarda en memoria (cómodo para dev/tests). Si se
+define `SENUELO_DB_PATH`, las autorizaciones y la bitácora pasan a **SQLite** y
+sobreviven a los reinicios:
+
+```bash
+export SENUELO_SIGNING_KEY="clave-secreta"
+export SENUELO_DB_PATH="./senuelo.db"
+uvicorn senuelo.api.app:app
+```
+
+El repositorio SQLite implementa la misma interfaz que el de memoria, así que la
+API no distingue cuál usa (migrar a Postgres es agregar otra implementación).
+
+El **audit log es inmutable en dos capas**: cada entrada encadena el hash de la
+anterior (alterar una entrada pasada rompe la cadena y `verify` lo detecta), y
+en SQLite dos triggers abortan cualquier `UPDATE` o `DELETE` sobre la tabla.
+Endpoints: `GET /audit` lista la bitácora, `GET /audit/verify` comprueba la
+integridad de la cadena.
+
+Demostración de durabilidad (crear+revocar, reiniciar el servidor, reconsultar):
+
+```
+# tras reiniciar con la misma DB:
+GET /authorizations/{id}     -> status: revoked, firma intacta
+GET /audit/verify            -> {"valid": true, "entries": 2,
+                                 "message": "la cadena de auditoría es íntegra"}
+```
+
 ## Desarrollo
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest -q          # 52 tests
+pytest -q          # 69 tests
 PYTHONPATH=. python examples/quickstart.py
+PYTHONPATH=. python examples/scoring_quickstart.py
+export SENUELO_SIGNING_KEY="clave-secreta" && uvicorn senuelo.api.app:app --reload
 ```
 
 ## Uso responsable
