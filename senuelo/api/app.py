@@ -13,7 +13,7 @@ from fastapi.responses import RedirectResponse
 
 from .. import __version__
 from .config import get_settings
-from .routers import audit, authorizations, scoring
+from .routers import audit, authorizations, campaigns, scoring
 
 DESCRIPTION = """\
 API de **Señuelo**, plataforma de simulación de phishing para concientización.
@@ -51,6 +51,7 @@ def create_app() -> FastAPI:
         }
 
     app.include_router(authorizations.router)
+    app.include_router(campaigns.router)
     app.include_router(scoring.router)
     app.include_router(audit.router)
     return app

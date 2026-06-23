@@ -9,7 +9,16 @@ from fastapi.testclient import TestClient
 
 from senuelo.api import config
 from senuelo.api.app import create_app
-from senuelo.api.repository import InMemoryAuthorizationRepository, get_repository
+from senuelo.api.campaign_repository import (
+    InMemoryCampaignRepository,
+    get_campaign_repository,
+)
+from senuelo.api.repository import (
+    InMemoryAuthorizationRepository,
+    get_audit_log,
+    get_repository,
+)
+from senuelo.storage import InMemoryAuditLog
 
 
 def make_client(monkeypatch, *, signing_key="clave-test", api_key=None):
@@ -24,7 +33,11 @@ def make_client(monkeypatch, *, signing_key="clave-test", api_key=None):
     config.get_settings.cache_clear()
     app = create_app()
     repo = InMemoryAuthorizationRepository()
+    campaign_repo = InMemoryCampaignRepository()
+    audit = InMemoryAuditLog()
     app.dependency_overrides[get_repository] = lambda: repo
+    app.dependency_overrides[get_campaign_repository] = lambda: campaign_repo
+    app.dependency_overrides[get_audit_log] = lambda: audit
     return TestClient(app)
 
 
@@ -153,3 +166,74 @@ def test_api_key_enforced_when_configured(monkeypatch):
     assert r.status_code == 200
     # health queda fuera del router protegido
     assert c.get("/health").status_code == 200
+
+
+# --- Campañas -----------------------------------------------------------
+
+def _assessment_body():
+    return {
+        "target_audience": "Finanzas",
+        "cues": {"mimics_business_process": 1, "url_hyperlinking": 1},
+        "premise_alignment": "high",
+    }
+
+
+def _create_auth(c):
+    return c.post("/authorizations", json=auth_payload()).json()["authorization_id"]
+
+
+def test_create_campaign_requires_existing_auth(monkeypatch):
+    c = make_client(monkeypatch)
+    r = c.post("/campaigns", json={
+        "name": "X", "authorization_id": "no-existe",
+        "assessment": _assessment_body(),
+        "recipients": ["a@empresa.cl"],
+    })
+    assert r.status_code == 404
+
+
+def test_campaign_full_flow(monkeypatch):
+    c = make_client(monkeypatch)
+    aid = _create_auth(c)
+
+    # crear -> draft
+    r = c.post("/campaigns", json={
+        "name": "Campaña Q3",
+        "authorization_id": aid,
+        "assessment": _assessment_body(),
+        "recipients": ["a@empresa.cl", "b@empresa.cl", "fuera@gmail.com"],
+    })
+    assert r.status_code == 201
+    cid = r.json()["campaign_id"]
+    assert r.json()["status"] == "draft"
+
+    # schedule -> scheduled
+    assert c.post(f"/campaigns/{cid}/schedule").json()["status"] == "scheduled"
+
+    # launch -> running, valida alcance y genera tracking
+    r = c.post(f"/campaigns/{cid}/launch", json={"seed": 42})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "running"
+    assert set(data["admitted"]) == {"a@empresa.cl", "b@empresa.cl"}
+    assert [x["email"] for x in data["rejected"]] == ["fuera@gmail.com"]
+    assert len(data["events"]) >= 2  # al menos un SENT por admitido
+
+    # metrics
+    m = c.get(f"/campaigns/{cid}/metrics").json()
+    assert m["sent"] == 2
+    assert "report_rate" in m
+
+    # events
+    assert c.get(f"/campaigns/{cid}/events").status_code == 200
+
+
+def test_campaign_invalid_transition_is_409(monkeypatch):
+    c = make_client(monkeypatch)
+    aid = _create_auth(c)
+    cid = c.post("/campaigns", json={
+        "name": "X", "authorization_id": aid,
+        "assessment": _assessment_body(), "recipients": ["a@empresa.cl"],
+    }).json()["campaign_id"]
+    # completar desde draft no es válido
+    assert c.post(f"/campaigns/{cid}/complete").status_code == 409

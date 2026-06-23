@@ -31,8 +31,8 @@ al castigo). Señuelo está construido para corregir exactamente eso.
 | `scoring` — NIST Phish Scale (dificultad + contexto de click rate) | ✅ implementado |
 | `api` — capa FastAPI (autorizaciones + scoring, API key) | ✅ implementado |
 | `storage` — persistencia SQLite + audit log inmutable (cadena de hashes) | ✅ implementado |
-| `campaigns`, `delivery`, `tracking` | 🔜 |
-| `training` (no-embedded), `dashboard` | 🔜 |
+| `campaigns` — ciclo de vida + tracking simulado (dry-run) | ✅ implementado |
+| `delivery` (envío real, con cautela), `training` (no-embedded), `dashboard` | 🔜 |
 
 ## El motor de alcance (`senuelo.scope`)
 
@@ -218,14 +218,56 @@ GET /audit/verify            -> {"valid": true, "entries": 2,
                                  "message": "la cadena de auditoría es íntegra"}
 ```
 
+## Campañas (`senuelo.campaigns`)
+
+El módulo que une todo. Una campaña referencia una **autorización**, embebe una
+**plantilla evaluada** con el Phish Scale y lleva una **lista de destinatarios**.
+Su ciclo de vida es una máquina de estados estricta:
+
+```
+draft ──schedule──▶ scheduled ──launch──▶ running ──complete──▶ completed
+  └──────────────── cancel ────────────────▶ cancelled
+```
+
+Al **lanzar** (en modo dry-run, sin enviar correos), la campaña valida los
+destinatarios contra el alcance (motor de scope) y genera **eventos de tracking
+simulados** cuyo embudo se modela a partir de la dificultad de la plantilla
+(NIST Phish Scale). De ahí emerge la métrica que distingue al proyecto: la
+**tasa de reporte**. Cada transición queda en el audit log inmutable.
+
+Decisión ética heredada: el evento `submitted` registra que la persona envió
+datos, **nunca qué datos**.
+
+Endpoints: `POST /campaigns`, `/schedule`, `/launch`, `/complete`, `/cancel`,
+más `GET /campaigns/{id}/events` y `/metrics`.
+
+Salida de `examples/campaign_quickstart.py`:
+
+```
+Campaña: Factura impaga a Finanzas  [running]
+Dificultad de la plantilla: Muy difícil
+
+Destinatarios: 30 admitidos, 2 rechazados
+  ✗ fuera@gmail.com [out_of_scope]
+  ✗ jefe@empresa.cl [excluded_recipient]
+
+Embudo (dry-run):
+  Enviados:  30
+  Abiertos:  21  (70.0%)
+  Clicks:    10  (33.3%)
+  Enviaron datos: 6  (20.0%)
+  REPORTARON: 3  (10.0%)   <- KPI de resiliencia
+```
+
 ## Desarrollo
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest -q          # 69 tests
+pytest -q          # 81 tests
 PYTHONPATH=. python examples/quickstart.py
 PYTHONPATH=. python examples/scoring_quickstart.py
+PYTHONPATH=. python examples/campaign_quickstart.py
 export SENUELO_SIGNING_KEY="clave-secreta" && uvicorn senuelo.api.app:app --reload
 ```
 
