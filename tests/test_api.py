@@ -237,3 +237,55 @@ def test_campaign_invalid_transition_is_409(monkeypatch):
     }).json()["campaign_id"]
     # completar desde draft no es válido
     assert c.post(f"/campaigns/{cid}/complete").status_code == 409
+
+
+# --- Dashboard y seed ---------------------------------------------------
+
+def test_dashboard_page_served(monkeypatch):
+    c = make_client(monkeypatch)
+    r = c.get("/dashboard")
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+    assert "Señuelo" in r.text
+
+
+def test_dashboard_data_empty(monkeypatch):
+    c = make_client(monkeypatch)
+    r = c.get("/dashboard/data")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["summary"]["campaigns"] == 0
+    assert body["campaigns"] == []
+
+
+def test_dashboard_data_with_campaign(monkeypatch):
+    c = make_client(monkeypatch)
+    aid = _create_auth(c)
+    cid = c.post("/campaigns", json={
+        "name": "C", "authorization_id": aid,
+        "assessment": _assessment_body(), "recipients": ["a@empresa.cl", "b@empresa.cl"],
+    }).json()["campaign_id"]
+    c.post(f"/campaigns/{cid}/schedule")
+    c.post(f"/campaigns/{cid}/launch", json={"seed": 1})
+    body = c.get("/dashboard/data").json()
+    assert body["summary"]["campaigns"] == 1
+    row = body["campaigns"][0]
+    assert row["difficulty"] == "very"
+    assert row["verdict"] in {"within_expected", "above_expected", "below_expected"}
+
+
+def test_seed_populates_with_anomaly():
+    from senuelo.api.campaign_repository import InMemoryCampaignRepository
+    from senuelo.api.repository import InMemoryAuthorizationRepository
+    from senuelo.api.seed import seed_demo
+    from senuelo.storage import InMemoryAuditLog
+
+    auth_repo = InMemoryAuthorizationRepository()
+    camp_repo = InMemoryCampaignRepository()
+    audit = InMemoryAuditLog()
+    seed_demo(auth_repo, camp_repo, audit, "clave-test")
+
+    campaigns = camp_repo.list()
+    assert len(campaigns) == 6
+    anomaly = next(c for c in campaigns if "Paquete retenido" in c.name)
+    assert anomaly.metrics().click_rate > 10.0

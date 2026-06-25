@@ -9,6 +9,8 @@ al castigo). Señuelo está construido para corregir exactamente eso.
 > Un señuelo que **entrena** en vez de cazar. El ejercicio solo existe con
 > consentimiento, dentro de un alcance autorizado y con feedback que suma.
 
+![Panel de concientización de Señuelo](docs/dashboard.png)
+
 ## Qué lo diferencia de un clon de GoPhish
 
 1. **Consentimiento y autorización como núcleo.** Nada se envía sin una
@@ -32,7 +34,8 @@ al castigo). Señuelo está construido para corregir exactamente eso.
 | `api` — capa FastAPI (autorizaciones + scoring, API key) | ✅ implementado |
 | `storage` — persistencia SQLite + audit log inmutable (cadena de hashes) | ✅ implementado |
 | `campaigns` — ciclo de vida + tracking simulado (dry-run) | ✅ implementado |
-| `delivery` (envío real, con cautela), `training` (no-embedded), `dashboard` | 🔜 |
+| `dashboard` — panel web de métricas (resiliencia vs susceptibilidad) | ✅ implementado |
+| `delivery` (envío real, con cautela), `training` (no-embedded) | 🔜 |
 
 ## El motor de alcance (`senuelo.scope`)
 
@@ -259,12 +262,35 @@ Embudo (dry-run):
   REPORTARON: 3  (10.0%)   <- KPI de resiliencia
 ```
 
+## Panel de concientización (`/dashboard`)
+
+Una página web autocontenida (servida por la propia API, sin build) que consume
+los datos agregados y cuenta la tesis del proyecto de un vistazo. El héroe no es
+un click rate de "gotcha": es el contraste **resiliencia (tasa de reporte) vs.
+susceptibilidad (tasa de click)**. Su elemento distintivo es un medidor por
+campaña que muestra el click rate **contra su banda esperada** según la
+dificultad — así un 23% en un phish "Poco difícil" se enciende en rojo (sobre lo
+esperado), mientras que un 26% en uno "Muy difícil" se lee como normal.
+
+Para verlo poblado, levanta el servidor con datos de demostración:
+
+```bash
+export SENUELO_SIGNING_KEY="clave-secreta"
+export SENUELO_SEED=1
+uvicorn senuelo.api.app:app
+# panel en http://127.0.0.1:8000/dashboard
+```
+
+`SENUELO_SEED=1` crea una autorización y seis campañas de distinta dificultad
+(una de ellas anómala, para mostrar la alarma). Los datos son simulación pura;
+no se envía ningún correo.
+
 ## Desarrollo
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest -q          # 81 tests
+pytest -q          # 85 tests
 PYTHONPATH=. python examples/quickstart.py
 PYTHONPATH=. python examples/scoring_quickstart.py
 PYTHONPATH=. python examples/campaign_quickstart.py

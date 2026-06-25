@@ -24,6 +24,7 @@ class Settings:
     signing_key: str | None
     api_key: str | None
     db_path: str | None
+    seed_demo: bool
 
     @property
     def auth_enabled(self) -> bool:
@@ -44,6 +45,7 @@ def get_settings() -> Settings:
         signing_key=os.environ.get("SENUELO_SIGNING_KEY"),
         api_key=os.environ.get("SENUELO_API_KEY"),
         db_path=os.environ.get("SENUELO_DB_PATH"),
+        seed_demo=os.environ.get("SENUELO_SEED", "").lower() in {"1", "true", "yes"},
     )
     if not settings.signing_enabled:
         logger.warning(
