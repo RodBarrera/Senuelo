@@ -304,3 +304,7 @@ concientización. El motor de alcance no es una formalidad: es la barrera que
 impide convertir la herramienta en un instrumento de ataque. Ejecutar campañas
 de phishing contra personas sin autorización explícita puede ser ilegal y es
 éticamente inaceptable.
+
+---
+
+**Autor:** Jorge Barrera Espinoza — Ingeniero en Ciberseguridad, Universidad Mayor (Chile)
